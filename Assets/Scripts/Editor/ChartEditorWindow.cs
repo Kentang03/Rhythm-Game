@@ -8,24 +8,17 @@ using System.Reflection;
 public enum ChartNoteType
 {
     Tap = 0,
-    Hold = 1
-}
-
-[System.Serializable]
-public class NoteData
-{
-    public float startBeat;      // posisi awal (dalam beat)
-    public float durationBeats;  // panjang note (dalam beat), misal 0.25, 0.5, 1, 2
-    public int lane;
+    Hold = 1,
+    Catch = 2
 }
 
 [System.Serializable]
 public class ChartNote
 {
     public float beat;
-    public int lane;            // 1-based
+    public int lane;            // 1-based index
     public ChartNoteType type;
-    public float length;        // in beats, only used by Hold notes
+    public float length;        // In beats (used by Hold notes)
 }
 
 public class ChartEditorWindow : EditorWindow
@@ -33,36 +26,40 @@ public class ChartEditorWindow : EditorWindow
     // Project Data
     private string projectName = "New Chart";
     private float bpm = 120f;
-    private float duration = 60f; // in seconds
+    private float duration = 60f; // In seconds
+    private string artistName = string.Empty;
     private AudioClip audioClip;
     private List<ChartNote> notes = new List<ChartNote>();
 
-    // 1 = per beat, 0.5 = 1/2 beat, 0.25 = 1/4 beat, 0.125 = 1/8 beat
-    private float snapBeats = 0.25f;
-    private readonly float[] snapOptions = { 1f, 0.5f, 0.25f, 0.125f };
-    private readonly string[] snapLabels = { "1/1", "1/2", "1/4", "1/8" };
-    private int snapIndex = 2;
-    
+    // Snap & Subdivision synchronization
+    private int snapDivision = 4; // Default subdivision = 4
+    private static readonly int[] SnapValues = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    private static readonly string[] SnapLabels = {
+        "2 beats", "3 beats", "4 beats", "5 beats", "6 beats", "7 beats", "8 beats",
+        "9 beats", "10 beats", "11 beats", "12 beats", "13 beats", "14 beats", "15 beats", "16 beats"
+    };
 
     // Timeline visualization
     private Vector2 scrollPosition;
     private float timelineWidth = 2000f;
     private float timelineHeight = 300f;
-    private float currentTime = 0f; // playhead position in seconds
+    private float currentTime = 0f; // Playhead position in seconds
     private float timelineViewWidth = 800f;
     private float visibleMinX = 0f;
     private float visibleMaxX = 2000f;
 
     // Grid settings
-    private float pixelsPerSecond = 50f;
-    private float beatsPerMeasure = 4f;
+    private float pixelsPerSecond = 100f; // Default initial zoom set to 100
+    private const float beatsPerMeasure = 1f;
 
     // Colors
-    private Color gridColor = new Color(0.3f, 0.3f, 0.3f, 1f);
-    private Color measureLineColor = new Color(0.5f, 0.5f, 0.5f, 1f);
-    private Color playheadColor = new Color(0.2f, 0.5f, 1f, 1f);
+    private Color gridColor = new Color(0.4f, 0.4f, 0.4f, 1f);
+    private Color measureLineColor = new Color(0.7f, 0.7f, 0.7f, 1f);
+    private Color playheadColor = new Color(0.2f, 0.6f, 1f, 1f);
+    private Color gridBorderColor = new Color(0.32f, 0.32f, 0.32f, 1f);
     private static readonly Color TapColor = new Color(0.30f, 0.79f, 0.94f, 1f);
     private static readonly Color HoldColor = new Color(0.96f, 0.64f, 0.38f, 1f);
+    private static readonly Color CatchColor = new Color(1f, 1f, 1f, 1f); // White
 
     // File path
     private string projectFilePath = "";
@@ -74,62 +71,57 @@ public class ChartEditorWindow : EditorWindow
     private System.Type audioUtilClass;
     private MethodInfo playPreviewClipMethod;
     private MethodInfo stopAllPreviewClipsMethod;
-    private float laneLength = 1;
+    private float laneLength = 4f;
 
-    // Layout constants (tweak these to fit your window)
-    private const float PanelHeight = 200f;
+    // Layout constants
+    private const float PanelHeight = 220f;
     private const float KeyframeRowHeight = 22f;
-    private const float KeyframeListHeight = 112f;
-    private const float RulerHeight = 24f;   // top band of the timeline (beat labels + scrub area)
-    private const float FooterHeight = 20f;  // bottom band of the timeline (second labels)
+    private const float KeyframeListHeight = 118f;
+    private const float RulerHeight = 24f;
+    private const float FooterHeight = 20f;
     private const float NoteHeadWidth = 14f;
+    private const float StandardButtonHeight = 22f;
 
     // Note editing
     private ChartNoteType selectedNoteType = ChartNoteType.Tap;
-    private int snapDivision = 4;
-    private static readonly int[] SnapValues = { 1, 2, 4, 8 };
-    private static readonly string[] SnapLabels = { "1 beat", "1/2 beat", "1/4 beat", "1/8 beat" };
     private bool isPlacingHold = false;
     private int holdLane;
     private float holdStartBeat;
     private float holdPreviewLength;
 
     // Keyframe panel
-    private static readonly string[] FilterLabels = { "All", "Tap", "Hold" };
-    private int keyframeFilter = 0; // 0 = all, 1 = tap, 2 = hold
+    private static readonly string[] FilterLabels = { "All", "Tap", "Hold", "Catch" };
+    private int keyframeFilter = 0;
     private bool followPlayhead = true;
     private Vector2 keyframeScroll;
     private readonly List<ChartNote> keyframeView = new List<ChartNote>();
     private bool keyframeViewDirty = true;
     private int lastCurrentRow = -2;
     private int pendingScrollRow = -1;
+    private int resizingIndex = -1;
 
-    // Styles (created lazily inside OnGUI)
-    private GUIStyle timeStyle, beatStyle, mutedLabel, hintStyle, emptyStyle, rowStyle, rowPastStyle, rowCenterStyle;
-
+    // Styles
+    private GUIStyle timeStyle, beatStyle, mutedLabel, hintStyle, emptyStyle, rowStyle, rowPastStyle, rowCenterStyle, headerBoxStyle;
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
     // Derived values
-    private int LaneCount { get { return Mathf.Clamp(Mathf.RoundToInt(laneLength), 1, 8); } }
-    private float SecondsPerBeat { get { return 60f / bpm; } }
-    private float TotalBeats { get { return duration / SecondsPerBeat; } }
-    private float CurrentBeat { get { return currentTime / SecondsPerBeat; } }
-    private float LaneHeight { get { return (timelineHeight - RulerHeight - FooterHeight) / LaneCount; } }
+    private int LaneCount => Mathf.Clamp(Mathf.RoundToInt(laneLength), 1, 8);
+    private float SecondsPerBeat => 60f / bpm;
+    private float TotalBeats => duration / SecondsPerBeat;
+    private float CurrentBeat => currentTime / SecondsPerBeat;
+    private float SnapBeats => 1f / snapDivision;
+    private float LaneHeight => (timelineHeight - RulerHeight - FooterHeight) / LaneCount;
 
     [MenuItem("Window/Chart Editor")]
     public static void ShowWindow()
     {
         ChartEditorWindow window = GetWindow<ChartEditorWindow>("Chart Editor");
-        window.minSize = new Vector2(900, 600);
+        window.minSize = new Vector2(980, 680);
         window.Show();
     }
 
     private void OnEnable()
     {
-        // Initialize window
-        Debug.Log("Chart Editor Window Enabled");
-
-        // Get AudioUtil class for editor audio playback
         unityEditorAssembly = typeof(AudioImporter).Assembly;
         audioUtilClass = unityEditorAssembly.GetType("UnityEditor.AudioUtil");
 
@@ -149,13 +141,11 @@ public class ChartEditorWindow : EditorWindow
             );
         }
 
-        // Register update callback for audio playback
         EditorApplication.update += OnEditorUpdate;
     }
 
     private void OnDisable()
     {
-        // Stop audio when window closes
         StopAudio();
         EditorApplication.update -= OnEditorUpdate;
     }
@@ -164,13 +154,11 @@ public class ChartEditorWindow : EditorWindow
     {
         if (!isPlaying) return;
 
-        // Update playhead position from the playback clock (works with or without audio)
         double elapsed = EditorApplication.timeSinceStartup - audioStartTime;
         currentTime = (float)elapsed;
 
         float end = audioClip != null ? audioClip.length : duration;
 
-        // Check if playback finished
         if (currentTime >= end)
         {
             currentTime = end;
@@ -187,30 +175,40 @@ public class ChartEditorWindow : EditorWindow
 
         DrawToolbar();
 
-        float leftWidth = Mathf.Clamp(position.width * 0.34f, 320f, 480f);
-        float rightWidth = position.width - leftWidth - 24f;
+        EditorGUILayout.Space(6);
+
+        // Top Header Banner
+        DrawTopHeaderPanel();
+
+        EditorGUILayout.Space(6);
+
+        // 3 Uniform Columns
+        float totalWidth = position.width - 24f;
+        float columnWidth = Mathf.Max(280f, totalWidth / 3f);
 
         EditorGUILayout.BeginHorizontal();
 
-        // Left column: Project Settings + Note Settings
-        EditorGUILayout.BeginVertical(GUILayout.Width(leftWidth));
-        DrawProjectSettings();
-        DrawNoteSetting();
-        EditorGUILayout.EndVertical();
+        // Column 1: Configuration & Note Tools
+        DrawSettingsColumn(columnWidth);
 
-        // Right column: Audio + Keyframes (the previously empty top-right area)
-        EditorGUILayout.BeginHorizontal();
-        DrawAudioPanel(Mathf.Clamp(rightWidth * 0.45f, 270f, 360f));
-        DrawKeyframePanel();
+        GUILayout.Space(6);
+
+        // Column 2: Audio Playback Controls
+        DrawAudioPanel(columnWidth);
+
+        GUILayout.Space(6);
+
+        // Column 3: Excel Grid Keyframes Panel
+        DrawKeyframePanel(columnWidth);
+
         EditorGUILayout.EndHorizontal();
 
-        EditorGUILayout.EndHorizontal();
+        EditorGUILayout.Space(6);
 
+        // Timeline
         DrawTimeline();
-        // DrawPlayheadControls();
 
-        // Auto repaint to keep timeline updated
-        if (Event.current.type == EventType.MouseDrag)
+        if (Event.current.type == EventType.MouseDrag || isPlacingHold)
         {
             Repaint();
         }
@@ -220,190 +218,209 @@ public class ChartEditorWindow : EditorWindow
     {
         if (timeStyle != null) return;
 
-        Font mono = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Menlo", "Courier New" }, 13);
-        Color muted = new Color(0.66f, 0.66f, 0.66f, 1f);
+        Font mono = Font.CreateDynamicFontFromOSFont(new[] { "Consolas", "Menlo", "Courier New" }, 12);
+        Color muted = new Color(0.70f, 0.70f, 0.70f, 1f);
 
-        timeStyle = new GUIStyle(EditorStyles.label) { font = mono, fontSize = 13, alignment = TextAnchor.MiddleLeft };
+        timeStyle = new GUIStyle(EditorStyles.label) { font = mono, fontSize = 12, alignment = TextAnchor.MiddleLeft };
 
-        beatStyle = new GUIStyle(timeStyle) { fontSize = 12 };
+        beatStyle = new GUIStyle(timeStyle) { fontSize = 11 };
         beatStyle.normal.textColor = new Color(0.62f, 0.76f, 1f, 1f);
 
         mutedLabel = new GUIStyle(EditorStyles.label) { fontSize = 11, clipping = TextClipping.Clip };
         mutedLabel.normal.textColor = muted;
 
-        hintStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
-        hintStyle.normal.textColor = muted;
+        hintStyle = new GUIStyle(EditorStyles.miniLabel)
+        {
+            fontSize = 11,
+            wordWrap = true,
+            margin = new RectOffset(0, 0, 2, 2),
+            padding = new RectOffset(0, 0, 0, 0)
+        };
+        hintStyle.normal.textColor = new Color(0.75f, 0.75f, 0.75f, 1f);
 
         emptyStyle = new GUIStyle(EditorStyles.label) { fontSize = 11, alignment = TextAnchor.MiddleCenter, wordWrap = true };
         emptyStyle.normal.textColor = muted;
 
-        rowStyle = new GUIStyle(EditorStyles.label) { font = mono, fontSize = 12, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
+        rowStyle = new GUIStyle(EditorStyles.label) { font = mono, fontSize = 11, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip };
         rowStyle.normal.textColor = new Color(0.89f, 0.89f, 0.89f, 1f);
 
         rowPastStyle = new GUIStyle(rowStyle);
         rowPastStyle.normal.textColor = new Color(0.55f, 0.55f, 0.55f, 1f);
 
         rowCenterStyle = new GUIStyle(rowStyle) { alignment = TextAnchor.MiddleCenter };
-        rowCenterStyle.normal.textColor = new Color(0.6f, 0.6f, 0.6f, 1f);
+        rowCenterStyle.normal.textColor = new Color(0.65f, 0.65f, 0.65f, 1f);
+
+        headerBoxStyle = new GUIStyle(EditorStyles.boldLabel)
+        {
+            fontSize = 12,
+            margin = new RectOffset(0, 0, 0, 6)
+        };
     }
 
     private void HandleGlobalShortcuts()
     {
         Event e = Event.current;
-        if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Space && !EditorGUIUtility.editingTextField)
+        if (e.type == EventType.KeyDown)
         {
-            TogglePlayback();
-            e.Use();
+            if (e.keyCode == KeyCode.Space && !EditorGUIUtility.editingTextField)
+            {
+                TogglePlayback();
+                e.Use();
+            }
+            else if (e.keyCode == KeyCode.Escape && isPlacingHold)
+            {
+                isPlacingHold = false;
+                e.Use();
+                Repaint();
+            }
         }
     }
 
     private void DrawToolbar()
     {
-        snapIndex = EditorGUILayout.Popup("Snap", snapIndex, snapLabels);
-        snapBeats = snapOptions[snapIndex]; 
         EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
 
-        if (GUILayout.Button("New Project", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        if (GUILayout.Button("New Project", EditorStyles.toolbarButton, GUILayout.Width(90)))
         {
             NewProject();
         }
 
-        if (GUILayout.Button("Load Project", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        if (GUILayout.Button("Load Project", EditorStyles.toolbarButton, GUILayout.Width(90)))
         {
             LoadProject();
         }
 
-        if (GUILayout.Button("Save Project", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        if (GUILayout.Button("Save Project", EditorStyles.toolbarButton, GUILayout.Width(90)))
         {
             SaveProject();
         }
-        if (GUILayout.Button("Test Project", EditorStyles.toolbarButton, GUILayout.Width(100)))
-        {
-            Debug.Log("Testing");
-        }
-        GUILayout.FlexibleSpace();
 
+        GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
     }
 
-    private void DrawProjectSettings()
+    private void DrawTopHeaderPanel()
     {
-        EditorGUILayout.BeginVertical("box");
-        EditorGUILayout.LabelField("Project Settings", EditorStyles.boldLabel);
+        EditorGUILayout.BeginVertical("box", GUILayout.ExpandWidth(true));
 
         EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Project Name:", GUILayout.Width(100));
-        projectName = EditorGUILayout.TextField(projectName);
+        GUILayout.FlexibleSpace();
+
+        float fieldWidth = Mathf.Min(600f, position.width * 0.6f);
+        EditorGUIUtility.labelWidth = 100f;
+
+        EditorGUILayout.BeginVertical(GUILayout.Width(fieldWidth));
+        projectName = EditorGUILayout.TextField("Project Name", projectName);
+        EditorGUILayout.Space(2);
+        artistName = EditorGUILayout.TextField("Artist Name", artistName);
+        EditorGUILayout.EndVertical();
+
+        GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
 
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawSettingsColumn(float width)
+    {
+        EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
+        EditorGUILayout.LabelField("Chart Configuration", headerBoxStyle);
+
+        EditorGUILayout.Space(2);
+
+        EditorGUIUtility.labelWidth = 105f;
+
+        bpm = Mathf.Clamp(EditorGUILayout.FloatField("BPM", bpm), 1f, 999f);
+
         EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("BPM:", GUILayout.Width(100));
-        bpm = EditorGUILayout.FloatField(bpm);
-        bpm = Mathf.Clamp(bpm, 1f, 300f);
+        EditorGUILayout.LabelField("Beats / Measure", GUILayout.Width(105));
+        EditorGUILayout.LabelField("1", EditorStyles.boldLabel);
         EditorGUILayout.EndHorizontal();
 
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Duration (sec):", GUILayout.Width(100));
-
-        // If audio clip is assigned, use its length
         if (audioClip != null)
         {
             duration = audioClip.length;
-            EditorGUILayout.FloatField(duration);
-            GUI.enabled = false;
-            EditorGUILayout.LabelField("(Auto from audio)", EditorStyles.miniLabel, GUILayout.Width(100));
-            GUI.enabled = true;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.FloatField("Duration (sec)", duration);
+            EditorGUILayout.LabelField("(Auto)", EditorStyles.miniLabel, GUILayout.Width(40));
+            EditorGUILayout.EndHorizontal();
         }
         else
         {
-            duration = EditorGUILayout.FloatField(duration);
-            duration = Mathf.Clamp(duration, 1f, 600f);
+            duration = Mathf.Clamp(EditorGUILayout.FloatField("Duration (sec)", duration), 1f, 1200f);
         }
 
-        EditorGUILayout.EndHorizontal();
+        EditorGUILayout.LabelField($"Total Beats: {TotalBeats:F2}", hintStyle);
 
-        // Display calculated info
-        float totalBeats = (bpm / 60f) * duration;
-        EditorGUILayout.LabelField($"Total Beats: {totalBeats:F2}", EditorStyles.miniLabel);
-
-        EditorGUILayout.EndVertical();
-
-        EditorGUILayout.Space(10);
-    }
-
-    private void DrawNoteSetting()
-    {
-        EditorGUILayout.BeginVertical("box");
-        EditorGUILayout.LabelField("Note Settings", EditorStyles.boldLabel);
+        EditorGUILayout.Space(4);
+        laneLength = Mathf.Clamp(EditorGUILayout.FloatField("Lane Count", laneLength), 1f, 8f);
 
         EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Lane Lenght", GUILayout.Width(100));
-        laneLength = EditorGUILayout.FloatField(laneLength);
-        laneLength = Mathf.Clamp(laneLength, 1f, 8f);
-        EditorGUILayout.EndHorizontal();
+        EditorGUILayout.LabelField("Note Type", GUILayout.Width(105));
 
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Type", GUILayout.Width(100));
-
-        if (GUILayout.Toggle(selectedNoteType == ChartNoteType.Tap, "Tap Note", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        if (GUILayout.Toggle(selectedNoteType == ChartNoteType.Tap, "Tap", EditorStyles.toolbarButton, GUILayout.Width(48), GUILayout.Height(StandardButtonHeight)))
         {
             selectedNoteType = ChartNoteType.Tap;
+            isPlacingHold = false;
         }
-
-        if (GUILayout.Toggle(selectedNoteType == ChartNoteType.Hold, "Hold Note", EditorStyles.toolbarButton, GUILayout.Width(100)))
+        if (GUILayout.Toggle(selectedNoteType == ChartNoteType.Hold, "Hold", EditorStyles.toolbarButton, GUILayout.Width(48), GUILayout.Height(StandardButtonHeight)))
         {
             selectedNoteType = ChartNoteType.Hold;
         }
-
+        if (GUILayout.Toggle(selectedNoteType == ChartNoteType.Catch, "Catch", EditorStyles.toolbarButton, GUILayout.Width(48), GUILayout.Height(StandardButtonHeight)))
+        {
+            selectedNoteType = ChartNoteType.Catch;
+            isPlacingHold = false;
+        }
         EditorGUILayout.EndHorizontal();
 
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Snap", GUILayout.Width(100));
-        snapDivision = EditorGUILayout.IntPopup(snapDivision, SnapLabels, SnapValues);
-        EditorGUILayout.EndHorizontal();
+        snapDivision = EditorGUILayout.IntPopup("Snap / Subdiv", snapDivision, SnapLabels, SnapValues);
 
-        EditorGUILayout.LabelField("Click a lane to place a note. Drag for Hold length. Right-click to delete.", hintStyle);
+        if (selectedNoteType == ChartNoteType.Hold)
+        {
+            EditorGUILayout.LabelField("Hold Mode: Click 1st beat (start), click 2nd beat (end). Esc to cancel.", hintStyle);
+        }
+        else
+        {
+            EditorGUILayout.LabelField("Click lane to place note. Right-click note to delete.", hintStyle);
+        }
 
         EditorGUILayout.EndVertical();
     }
-
-    // ---------------------------------------------------------------------
-    // Audio panel
-    // ---------------------------------------------------------------------
 
     private void DrawAudioPanel(float width)
     {
         EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
-        EditorGUILayout.LabelField("Audio", EditorStyles.boldLabel);
 
-        // Track row
+        // Alignment Fix: Place "+ Add music" on the exact same header row
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label(audioClip != null ? audioClip.name : "No music loaded", mutedLabel, GUILayout.Height(20));
-        if (GUILayout.Button(audioClip != null ? "Change" : "+ Add music", GUILayout.Width(88)))
+        EditorGUILayout.LabelField("Audio Playback", headerBoxStyle);
+        if (GUILayout.Button(audioClip != null ? "Change" : "+ Add music", GUILayout.Width(82), GUILayout.Height(20)))
         {
             AddMusic();
         }
         EditorGUILayout.EndHorizontal();
 
+        // Track title / status
+        GUILayout.Label(audioClip != null ? audioClip.name : "No music loaded", mutedLabel, GUILayout.Height(18));
+
         EditorGUILayout.Space(4);
 
-        // Transport row
         EditorGUILayout.BeginHorizontal();
-
         Color previousBackground = GUI.backgroundColor;
         GUI.backgroundColor = playheadColor;
-        if (GUILayout.Button(isPlaying ? "⏸ Pause" : "▶ Play", GUILayout.Height(32), GUILayout.Width(82)))
+        if (GUILayout.Button(isPlaying ? "⏸ Pause" : "▶ Play", GUILayout.Height(StandardButtonHeight), GUILayout.Width(75)))
         {
             TogglePlayback();
         }
         GUI.backgroundColor = previousBackground;
 
-        if (GUILayout.Button("⏹ Stop", GUILayout.Height(32), GUILayout.Width(66)))
+        if (GUILayout.Button("⏹ Stop", GUILayout.Height(StandardButtonHeight), GUILayout.Width(60)))
         {
             StopAudio();
         }
 
-        GUILayout.Space(6);
+        GUILayout.Space(4);
 
         EditorGUILayout.BeginVertical();
         GUILayout.Label(FormatTime(currentTime) + " / " + FormatTime(duration), timeStyle);
@@ -413,9 +430,7 @@ public class ChartEditorWindow : EditorWindow
         GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
 
-        EditorGUILayout.Space(4);
-
-        // Seek bar
+        // Seek Bar
         EditorGUI.BeginChangeCheck();
         float seek = GUILayout.HorizontalSlider(currentTime, 0f, duration);
         if (EditorGUI.EndChangeCheck())
@@ -423,8 +438,9 @@ public class ChartEditorWindow : EditorWindow
             SeekTo(seek);
         }
 
-        EditorGUILayout.Space(4);
-        GUILayout.Label("Space: play or pause. Click a keyframe to jump to its beat.", hintStyle);
+        // Space added to push "Controls" label down away from the slider bar
+        EditorGUILayout.Space(14);
+        GUILayout.Label("Controls:\n• Scroll Wheel: Move Timeline Left/Right\n• Ctrl/Cmd + Scroll Wheel: Zoom In/Out\n• Space: Play / Pause", hintStyle);
 
         EditorGUILayout.EndVertical();
     }
@@ -435,7 +451,7 @@ public class ChartEditorWindow : EditorWindow
         if (string.IsNullOrEmpty(path)) return;
 
         string assetPath;
-        string dataPath = Application.dataPath; // .../Project/Assets
+        string dataPath = Application.dataPath;
 
         if (path.StartsWith(dataPath, System.StringComparison.OrdinalIgnoreCase))
         {
@@ -443,10 +459,9 @@ public class ChartEditorWindow : EditorWindow
         }
         else
         {
-            // The clip must live inside the project so the path can be saved and reloaded.
             bool copy = EditorUtility.DisplayDialog(
                 "Copy music into project?",
-                "This file is outside your Unity project. Copy it to Assets/ChartAudio so it can be saved with the chart?",
+                "This file is outside your Unity project. Copy it to Assets/ChartAudio?",
                 "Copy",
                 "Cancel");
             if (!copy) return;
@@ -477,73 +492,72 @@ public class ChartEditorWindow : EditorWindow
 
     private void TogglePlayback()
     {
-        if (isPlaying)
-        {
-            PauseAudio();
-        }
-        else
-        {
-            PlayAudio();
-        }
+        if (isPlaying) PauseAudio();
+        else PlayAudio();
     }
 
-    // ---------------------------------------------------------------------
-    // Keyframe panel
-    // ---------------------------------------------------------------------
-
-    private void DrawKeyframePanel()
+    private void DrawKeyframePanel(float width)
     {
         EnsureKeyframeView();
 
-        EditorGUILayout.BeginVertical("box", GUILayout.Height(PanelHeight));
+        EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
 
-        // Header
         EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("Keyframes (" + notes.Count + ")", EditorStyles.boldLabel);
-        if (GUILayout.Button(new GUIContent("‹", "Previous keyframe"), EditorStyles.miniButtonLeft, GUILayout.Width(26)))
+        EditorGUILayout.LabelField("Keyframes (" + notes.Count + ")", headerBoxStyle);
+        if (GUILayout.Button(new GUIContent("‹", "Previous keyframe"), EditorStyles.miniButtonLeft, GUILayout.Width(24), GUILayout.Height(StandardButtonHeight - 2f)))
         {
             JumpToAdjacentKeyframe(-1);
         }
-        if (GUILayout.Button(new GUIContent("›", "Next keyframe"), EditorStyles.miniButtonRight, GUILayout.Width(26)))
+        if (GUILayout.Button(new GUIContent("›", "Next keyframe"), EditorStyles.miniButtonRight, GUILayout.Width(24), GUILayout.Height(StandardButtonHeight - 2f)))
         {
             JumpToAdjacentKeyframe(1);
         }
         EditorGUILayout.EndHorizontal();
 
-        // Filter + follow
         EditorGUILayout.BeginHorizontal();
         EditorGUI.BeginChangeCheck();
-        keyframeFilter = GUILayout.Toolbar(keyframeFilter, FilterLabels, GUILayout.Width(135));
+        keyframeFilter = GUILayout.Toolbar(keyframeFilter, FilterLabels, GUILayout.Width(170), GUILayout.Height(StandardButtonHeight));
         if (EditorGUI.EndChangeCheck())
         {
             keyframeViewDirty = true;
         }
         GUILayout.FlexibleSpace();
-        followPlayhead = GUILayout.Toggle(followPlayhead, new GUIContent("Follow", "Auto-scroll the list with the playhead"), GUILayout.Width(60));
+        EditorGUILayout.Space(12);
+        followPlayhead = GUILayout.Toggle(followPlayhead, new GUIContent("Follow", "Auto-scroll list with playhead"), GUILayout.Width(55));
         EditorGUILayout.EndHorizontal();
 
         EnsureKeyframeView();
 
-        // Column header
-        Rect header = GUILayoutUtility.GetRect(0, 18, GUILayout.ExpandWidth(true));
-        EditorGUI.DrawRect(header, new Color(0.19f, 0.19f, 0.19f, 1f));
-        GUI.Label(new Rect(header.x + 8, header.y, 64, header.height), "Beat", mutedLabel);
-        GUI.Label(new Rect(header.x + 76, header.y, 40, header.height), "Lane", mutedLabel);
-        GUI.Label(new Rect(header.x + 130, header.y, 100, header.height), "Type", mutedLabel);
+        EditorGUILayout.Space(15);
 
-        // List
+        // Excel Table Header with Box Separators
+        Rect header = GUILayoutUtility.GetRect(0, 20, GUILayout.ExpandWidth(true));
+        EditorGUI.DrawRect(header, new Color(0.22f, 0.22f, 0.22f, 1f));
+
+        float col1W = 75f;
+        float col2W = 50f;
+
+        GUI.Label(new Rect(header.x + 6, header.y + 2, col1W - 6, header.height - 2), "Beat", mutedLabel);
+        GUI.Label(new Rect(header.x + col1W + 6, header.y + 2, col2W - 6, header.height - 2), "Lane", mutedLabel);
+        GUI.Label(new Rect(header.x + col1W + col2W + 6, header.y + 2, header.width - col1W - col2W - 6, header.height - 2), "Type", mutedLabel);
+
+        // Vertical Excel grid lines for Header
+        EditorGUI.DrawRect(new Rect(header.x + col1W, header.y, 1f, header.height), gridBorderColor);
+        EditorGUI.DrawRect(new Rect(header.x + col1W + col2W, header.y, 1f, header.height), gridBorderColor);
+        EditorGUI.DrawRect(new Rect(header.x, header.y + header.height - 1f, header.width, 1f), gridBorderColor);
+
         Rect listRect = GUILayoutUtility.GetRect(0, KeyframeListHeight, GUILayout.ExpandWidth(true));
         EditorGUI.DrawRect(listRect, new Color(0.16f, 0.16f, 0.16f, 1f));
-        DrawKeyframeList(listRect);
+        DrawKeyframeList(listRect, col1W, col2W);
 
         EditorGUILayout.EndVertical();
     }
 
-    private void DrawKeyframeList(Rect listRect)
+    private void DrawKeyframeList(Rect listRect, float col1W, float col2W)
     {
         if (keyframeView.Count == 0)
         {
-            GUI.Label(listRect, "No keyframes yet.\nClick a lane in the timeline to add a note.", emptyStyle);
+            GUI.Label(listRect, "No keyframes yet.\nClick a lane in the timeline to add notes.", emptyStyle);
             return;
         }
 
@@ -568,13 +582,14 @@ public class ChartEditorWindow : EditorWindow
 
         keyframeScroll = GUI.BeginScrollView(listRect, keyframeScroll, new Rect(0, 0, viewWidth, contentHeight));
 
-        // Only draw the rows that are visible, so long charts stay cheap
         int first = Mathf.Max(0, Mathf.FloorToInt(keyframeScroll.y / KeyframeRowHeight));
         int last = Mathf.Min(keyframeView.Count - 1, Mathf.CeilToInt((keyframeScroll.y + listRect.height) / KeyframeRowHeight));
 
         Event e = Event.current;
         ChartNote toDelete = null;
         ChartNote toJump = null;
+
+        float col3W = viewWidth - col1W - col2W - 24f;
 
         for (int i = first; i <= last; i++)
         {
@@ -595,19 +610,29 @@ public class ChartEditorWindow : EditorWindow
 
             GUIStyle style = isPast ? rowPastStyle : rowStyle;
 
-            GUI.Label(new Rect(8, row.y, 64, row.height), FormatBeat(n.beat), style);
-            GUI.Label(new Rect(76, row.y, 40, row.height), "L" + n.lane, style);
+            // Excel Column 1: Beat
+            GUI.Label(new Rect(row.x + 6, row.y, col1W - 6, row.height), FormatBeat(n.beat), style);
 
-            Color typeColor = n.type == ChartNoteType.Tap ? TapColor : HoldColor;
-            EditorGUI.DrawRect(new Rect(130, row.y + row.height * 0.5f - 4f, 8, 8), typeColor);
+            // Excel Column 2: Lane
+            GUI.Label(new Rect(row.x + col1W + 6, row.y, col2W - 6, row.height), "L" + n.lane, style);
 
-            string typeText = n.type == ChartNoteType.Tap
-                ? "Tap"
-                : "Hold  " + n.length.ToString("0.##", Inv) + " beats";
-            GUI.Label(new Rect(144, row.y, Mathf.Max(0f, viewWidth - 144f - 26f), row.height), typeText, style);
+            // Excel Column 3: Type
+            Color typeColor = n.type == ChartNoteType.Tap ? TapColor : (n.type == ChartNoteType.Hold ? HoldColor : CatchColor);
+            EditorGUI.DrawRect(new Rect(row.x + col1W + col2W + 6, row.y + row.height * 0.5f - 4f, 8, 8), typeColor);
 
-            Rect deleteRect = new Rect(viewWidth - 24f, row.y, 22f, row.height);
+            string typeText = n.type == ChartNoteType.Tap ? "Tap" :
+                             (n.type == ChartNoteType.Hold ? "Hold (" + n.length.ToString("0.##", Inv) + "b)" : "Catch");
+            GUI.Label(new Rect(row.x + col1W + col2W + 18, row.y, Mathf.Max(0f, col3W - 18), row.height), typeText, style);
+
+            // Excel Column 4: Delete button
+            Rect deleteRect = new Rect(viewWidth - 24f, row.y, 24f, row.height);
             GUI.Label(deleteRect, "×", rowCenterStyle);
+
+            // Excel Box Lines (Vertical Separators & Bottom Border)
+            EditorGUI.DrawRect(new Rect(row.x + col1W, row.y, 1f, row.height), gridBorderColor);
+            EditorGUI.DrawRect(new Rect(row.x + col1W + col2W, row.y, 1f, row.height), gridBorderColor);
+            EditorGUI.DrawRect(new Rect(viewWidth - 24f, row.y, 1f, row.height), gridBorderColor);
+            EditorGUI.DrawRect(new Rect(row.x, row.y + row.height - 1f, viewWidth, 1f), gridBorderColor);
 
             if (e.type == EventType.MouseDown && e.button == 0 && row.Contains(e.mousePosition))
             {
@@ -648,14 +673,14 @@ public class ChartEditorWindow : EditorWindow
             ChartNote n = notes[i];
             bool include = keyframeFilter == 0
                 || (keyframeFilter == 1 && n.type == ChartNoteType.Tap)
-                || (keyframeFilter == 2 && n.type == ChartNoteType.Hold);
+                || (keyframeFilter == 2 && n.type == ChartNoteType.Hold)
+                || (keyframeFilter == 3 && n.type == ChartNoteType.Catch);
             if (include)
             {
                 keyframeView.Add(n);
             }
         }
 
-        // Force the follow logic to re-center on the current row
         lastCurrentRow = -2;
     }
 
@@ -724,18 +749,40 @@ public class ChartEditorWindow : EditorWindow
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Notes
-    // ---------------------------------------------------------------------
+    private bool CanPlaceNote(int lane, float startBeat, float endBeat, ChartNoteType type, ChartNote ignoreNote = null)
+    {
+        if (type == ChartNoteType.Catch)
+            return true;
+
+        for (int i = 0; i < notes.Count; i++)
+        {
+            ChartNote n = notes[i];
+            if (n == ignoreNote || n.lane != lane) continue;
+
+            if (n.type == ChartNoteType.Catch) continue;
+
+            float existingStart = n.beat;
+            float existingEnd = (n.type == ChartNoteType.Hold) ? (n.beat + n.length) : n.beat;
+
+            float newStart = startBeat;
+            float newEnd = (type == ChartNoteType.Hold) ? endBeat : startBeat;
+
+            if (newStart <= existingEnd - 0.0001f && newEnd >= existingStart + 0.0001f)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private void AddNote(int lane, float beat, ChartNoteType type, float length)
     {
-        for (int i = 0; i < notes.Count; i++)
+        float endBeat = (type == ChartNoteType.Hold) ? (beat + length) : beat;
+
+        if (!CanPlaceNote(lane, beat, endBeat, type))
         {
-            if (notes[i].lane == lane && Mathf.Abs(notes[i].beat - beat) < 0.0001f)
-            {
-                return; // already a note here
-            }
+            return;
         }
 
         notes.Add(new ChartNote
@@ -807,14 +854,11 @@ public class ChartEditorWindow : EditorWindow
         }
         return null;
     }
-    
-    // field class
-    private int resizingIndex = -1;
 
     private void DrawNotes()
     {
         int laneCount = LaneCount;
-        float secondsPerBeat = 60f / bpm;
+        float secondsPerBeat = SecondsPerBeat;
         float pixelsPerBeat = secondsPerBeat * pixelsPerSecond;
         Event e = Event.current;
 
@@ -828,7 +872,6 @@ public class ChartEditorWindow : EditorWindow
 
             DrawNoteRect(r, n.type, 1f);
 
-            // resize handle hanya untuk Hold
             if (n.type == ChartNoteType.Hold)
             {
                 float handleWidth = Mathf.Min(6f, r.width * 0.3f);
@@ -843,14 +886,19 @@ public class ChartEditorWindow : EditorWindow
             }
         }
 
-        // drag diproses sekali, di luar loop
         if (resizingIndex >= 0 && e.type == EventType.MouseDrag)
         {
             ChartNote n = notes[resizingIndex];
             float mouseBeat = e.mousePosition.x / pixelsPerBeat;
             float rawLength = mouseBeat - n.beat;
-            n.length = Mathf.Max(snapBeats, Mathf.Round(rawLength / snapBeats) * snapBeats);
-            notes[resizingIndex] = n; // aman kalau ChartNote adalah struct
+            float newLength = Mathf.Max(SnapBeats, Mathf.Round(rawLength / SnapBeats) * SnapBeats);
+
+            if (CanPlaceNote(n.lane, n.beat, n.beat + newLength, ChartNoteType.Hold, ignoreNote: n))
+            {
+                n.length = newLength;
+                notes[resizingIndex] = n;
+            }
+
             e.Use();
             Repaint();
         }
@@ -858,15 +906,31 @@ public class ChartEditorWindow : EditorWindow
         if (e.type == EventType.MouseUp)
             resizingIndex = -1;
 
-        // preview hold, digambar sekali
         if (isPlacingHold)
         {
             Rect preview = GetNoteRect(holdStartBeat, holdLane, ChartNoteType.Hold, holdPreviewLength);
             DrawNoteRect(preview, ChartNoteType.Hold, 0.55f);
         }
     }
+
     private void DrawNoteRect(Rect r, ChartNoteType type, float alpha)
     {
+        if (type == ChartNoteType.Catch)
+        {
+            float catchWidth = NoteHeadWidth * 0.75f;
+            float catchHeight = r.height * 0.55f;
+            Rect catchRect = new Rect(
+                r.x + (r.width - catchWidth) * 0.5f,
+                r.y + (r.height - catchHeight) * 0.5f,
+                catchWidth,
+                catchHeight
+            );
+            Color head = CatchColor;
+            head.a = alpha;
+            EditorGUI.DrawRect(catchRect, head);
+            return;
+        }
+
         Color baseColor = type == ChartNoteType.Tap ? TapColor : HoldColor;
 
         if (type == ChartNoteType.Hold)
@@ -876,27 +940,23 @@ public class ChartEditorWindow : EditorWindow
             EditorGUI.DrawRect(r, body);
         }
 
-        Color head = baseColor;
-        head.a = alpha;
-        EditorGUI.DrawRect(new Rect(r.x, r.y, Mathf.Min(NoteHeadWidth, r.width), r.height), head);
+        Color headColor = baseColor;
+        headColor.a = alpha;
+        EditorGUI.DrawRect(new Rect(r.x, r.y, Mathf.Min(NoteHeadWidth, r.width), r.height), headColor);
     }
-
-    // ---------------------------------------------------------------------
-    // Timeline
-    // ---------------------------------------------------------------------
 
     private void DrawTimeline()
     {
-        EditorGUILayout.LabelField("Timeline", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("Timeline View", headerBoxStyle);
 
         EditorGUILayout.BeginHorizontal();
         EditorGUILayout.LabelField("Zoom:", GUILayout.Width(50));
-        pixelsPerSecond = EditorGUILayout.Slider(pixelsPerSecond, 10f, 200f);
+        pixelsPerSecond = EditorGUILayout.Slider(pixelsPerSecond, 10f, 600f);
         EditorGUILayout.EndHorizontal();
 
         timelineWidth = duration * pixelsPerSecond;
 
-        Rect scrollViewRect = GUILayoutUtility.GetRect(position.width - 20, timelineHeight + 15); // +15 untuk scrollbar
+        Rect scrollViewRect = GUILayoutUtility.GetRect(position.width - 20, timelineHeight + 15);
         if (Event.current.type == EventType.Repaint)
         {
             timelineViewWidth = scrollViewRect.width;
@@ -906,7 +966,7 @@ public class ChartEditorWindow : EditorWindow
             scrollViewRect,
             scrollPosition,
             new Rect(0, 0, timelineWidth, timelineHeight),
-            true, false); // horizontal scrollbar selalu tampil, vertikal tidak
+            true, false);
 
         visibleMinX = scrollPosition.x;
         visibleMaxX = scrollPosition.x + scrollViewRect.width;
@@ -918,41 +978,56 @@ public class ChartEditorWindow : EditorWindow
         DrawNotes();
         DrawPlayhead();
 
-        // Input diproses DI DALAM scroll view, pakai koordinat lokal
-        HandleTimelineInput();
+        HandleTimelineInput(scrollViewRect);
 
         GUI.EndScrollView();
     }
 
     private void DrawGridLines()
     {
-        float secondsPerBeat = 60f / bpm;
-        float totalBeats = duration / secondsPerBeat;
+        float secondsPerBeat = SecondsPerBeat;
+        float totalBeats = TotalBeats;
 
-        // Draw beat lines
+        int majorStep = -1;
+        if (snapDivision % 3 == 0) majorStep = 3;
+        else if (snapDivision % 4 == 0) majorStep = 4;
+        else if (snapDivision % 5 == 0) majorStep = 5;
+        else if (snapDivision % 7 == 0) majorStep = 7;
+
         for (int beat = 0; beat <= Mathf.CeilToInt(totalBeats); beat++)
         {
             float timeInSeconds = beat * secondsPerBeat;
             float xPos = timeInSeconds * pixelsPerSecond;
 
-            // Check if this is a measure line (every 4 beats by default)
             bool isMeasureLine = (beat % beatsPerMeasure == 0);
             Color lineColor = isMeasureLine ? measureLineColor : gridColor;
-            float lineWidth = isMeasureLine ? 2f : 1f;
+            float lineWidth = isMeasureLine ? 2.5f : 1.5f;
 
-            // Draw vertical line
             Rect lineRect = new Rect(xPos, 0, lineWidth, timelineHeight);
             EditorGUI.DrawRect(lineRect, lineColor);
 
-            // Draw beat number for measure lines
             if (isMeasureLine)
             {
                 Rect labelRect = new Rect(xPos + 3, 4, 50, 18);
                 GUI.Label(labelRect, $"B{beat}", EditorStyles.miniLabel);
             }
+
+            for (int sub = 1; sub < snapDivision; sub++)
+            {
+                float subBeatTime = (beat + ((float)sub / snapDivision)) * secondsPerBeat;
+                float subXPos = subBeatTime * pixelsPerSecond;
+
+                bool isMajorSub = (majorStep > 0 && sub % majorStep == 0);
+                Color subColor = isMajorSub
+                    ? new Color(0.85f, 0.85f, 0.85f, 0.95f)
+                    : new Color(0.6f, 0.6f, 0.6f, 0.65f);
+
+                float subLineWidth = isMajorSub ? 2f : 1.2f;
+                Rect subRect = new Rect(subXPos, 0, subLineWidth, timelineHeight);
+                EditorGUI.DrawRect(subRect, subColor);
+            }
         }
 
-        // Draw time markers every second
         for (int sec = 0; sec <= Mathf.CeilToInt(duration); sec++)
         {
             float xPos = sec * pixelsPerSecond;
@@ -960,7 +1035,6 @@ public class ChartEditorWindow : EditorWindow
             GUI.Label(labelRect, $"{sec}s", EditorStyles.miniLabel);
         }
 
-        // Lane separators (lane area sits between the ruler and the footer)
         int laneCount = LaneCount;
         float laneHeight = LaneHeight;
 
@@ -978,11 +1052,9 @@ public class ChartEditorWindow : EditorWindow
     {
         float xPos = currentTime * pixelsPerSecond;
 
-        // Draw playhead line
         Rect playheadRect = new Rect(xPos - 1, 0, 3, timelineHeight);
         EditorGUI.DrawRect(playheadRect, playheadColor);
 
-        // Draw playhead triangle at top
         Handles.BeginGUI();
         Handles.color = playheadColor;
         Vector3[] trianglePoints = new Vector3[3]
@@ -995,16 +1067,51 @@ public class ChartEditorWindow : EditorWindow
         Handles.EndGUI();
     }
 
-    private int controlID_Dragging = 0;
     private bool isScrubbing = false;
 
-    private void HandleTimelineInput()
+    private void HandleTimelineInput(Rect scrollViewRect)
     {
         Event e = Event.current;
 
-        // Ruler (top band): scrub the playhead. Lane area: place and delete notes.
+        if (e.type == EventType.ScrollWheel)
+        {
+            if (e.control || e.command || e.alt)
+            {
+                // Zoom
+                float zoomDelta = e.delta.y != 0 ? e.delta.y : e.delta.x;
+                pixelsPerSecond = Mathf.Clamp(pixelsPerSecond - zoomDelta * 2.5f, 10f, 600f);
+            }
+            else
+            {
+                // Scroll left/right
+                float scrollDelta = e.delta.y != 0 ? e.delta.y : e.delta.x;
+                scrollPosition.x = Mathf.Clamp(scrollPosition.x + scrollDelta * 25f, 0f, Mathf.Max(0f, timelineWidth - timelineViewWidth));
+            }
+
+            e.Use();
+            Repaint();
+            return;
+        }
+
         Rect rulerRect = new Rect(0, 0, timelineWidth, RulerHeight);
         Rect laneAreaRect = new Rect(0, RulerHeight, timelineWidth, timelineHeight - RulerHeight - FooterHeight);
+
+        if (isPlacingHold && laneAreaRect.Contains(e.mousePosition))
+        {
+            float mouseBeat = SnapBeat(e.mousePosition.x);
+            if (mouseBeat > holdStartBeat)
+            {
+                float desiredLength = mouseBeat - holdStartBeat;
+                if (CanPlaceNote(holdLane, holdStartBeat, holdStartBeat + desiredLength, ChartNoteType.Hold))
+                {
+                    holdPreviewLength = desiredLength;
+                }
+            }
+            else
+            {
+                holdPreviewLength = SnapBeats;
+            }
+        }
 
         switch (e.type)
         {
@@ -1017,19 +1124,41 @@ public class ChartEditorWindow : EditorWindow
                 }
                 else if (e.button == 0 && laneAreaRect.Contains(e.mousePosition))
                 {
-                    BeginPlaceNote(e.mousePosition);
-                    e.Use();
+                    if (isPlacingHold)
+                    {
+                        float targetBeat = SnapBeat(e.mousePosition.x);
+                        if (targetBeat > holdStartBeat)
+                        {
+                            float finalLength = targetBeat - holdStartBeat;
+                            AddNote(holdLane, holdStartBeat, ChartNoteType.Hold, finalLength);
+                        }
+                        isPlacingHold = false;
+                        e.Use();
+                    }
+                    else
+                    {
+                        BeginPlaceNote(e.mousePosition);
+                        e.Use();
+                    }
                 }
                 else if (e.button == 1 && laneAreaRect.Contains(e.mousePosition))
                 {
-                    ChartNote hit = HitTestNote(e.mousePosition);
-                    if (hit != null)
+                    if (isPlacingHold)
                     {
-                        notes.Remove(hit);
-                        keyframeViewDirty = true;
-                        Repaint();
+                        isPlacingHold = false;
+                        e.Use();
                     }
-                    e.Use();
+                    else
+                    {
+                        ChartNote hit = HitTestNote(e.mousePosition);
+                        if (hit != null)
+                        {
+                            notes.Remove(hit);
+                            keyframeViewDirty = true;
+                            Repaint();
+                        }
+                        e.Use();
+                    }
                 }
                 break;
 
@@ -1039,13 +1168,7 @@ public class ChartEditorWindow : EditorWindow
                     SetTimeFromMouse(e.mousePosition.x);
                     e.Use();
                 }
-                else if (isPlacingHold)
-                {
-                    float minLength = 1f / snapDivision;
-                    holdPreviewLength = Mathf.Max(minLength, SnapBeat(e.mousePosition.x) - holdStartBeat);
-                    e.Use();
-                }
-                else if (e.button == 2) // Middle mouse: pan timeline
+                else if (e.button == 2)
                 {
                     scrollPosition.x -= e.delta.x;
                     e.Use();
@@ -1058,17 +1181,10 @@ public class ChartEditorWindow : EditorWindow
                     isScrubbing = false;
                     e.Use();
                 }
-                else if (isPlacingHold)
-                {
-                    AddNote(holdLane, holdStartBeat, ChartNoteType.Hold, holdPreviewLength);
-                    isPlacingHold = false;
-                    e.Use();
-                }
                 break;
 
             case EventType.MouseLeaveWindow:
                 isScrubbing = false;
-                isPlacingHold = false;
                 break;
         }
     }
@@ -1084,57 +1200,31 @@ public class ChartEditorWindow : EditorWindow
         {
             AddNote(lane, beat, ChartNoteType.Tap, 0f);
         }
-        else
+        else if (selectedNoteType == ChartNoteType.Catch)
         {
-            isPlacingHold = true;
-            holdLane = lane;
-            holdStartBeat = beat;
-            holdPreviewLength = 1f / snapDivision;
+            AddNote(lane, beat, ChartNoteType.Catch, 0f);
+        }
+        else if (selectedNoteType == ChartNoteType.Hold)
+        {
+            if (CanPlaceNote(lane, beat, beat + SnapBeats, ChartNoteType.Hold))
+            {
+                isPlacingHold = true;
+                holdLane = lane;
+                holdStartBeat = beat;
+                holdPreviewLength = SnapBeats;
+            }
         }
     }
 
     private void SetTimeFromMouse(float localX)
     {
-        // mousePosition di dalam ScrollView sudah lokal, TIDAK perlu ditambah scrollPosition
         SeekTo(localX / pixelsPerSecond);
     }
 
-    // private void DrawPlayheadControls()
-    // {
-    //     EditorGUILayout.Space(10);
-    //     EditorGUILayout.BeginVertical("box");
-    //     EditorGUILayout.LabelField("Playhead Control", EditorStyles.boldLabel);
-
-    //     EditorGUILayout.BeginHorizontal();
-    //     EditorGUILayout.LabelField("Current Time:", GUILayout.Width(100));
-
-    //     float newTime = EditorGUILayout.Slider(currentTime, 0f, duration);
-    //     if (newTime != currentTime)
-    //     {
-    //         SeekTo(newTime);
-    //     }
-
-    //     EditorGUILayout.LabelField($"{currentTime:F2}s", GUILayout.Width(60));
-    //     EditorGUILayout.EndHorizontal();
-
-    //     // Display current beat
-    //     float secondsPerBeat = 60f / bpm;
-    //     float currentBeat = currentTime / secondsPerBeat;
-    //     EditorGUILayout.LabelField($"Current Beat: {currentBeat:F2}", EditorStyles.miniLabel);
-
-    //     EditorGUILayout.EndVertical();
-    // }
-
-    // ---------------------------------------------------------------------
-    // Playback
-    // ---------------------------------------------------------------------
-
-    // Single entry point for moving the playhead (scrub, slider, keyframe jump).
     private void SeekTo(float time)
     {
         currentTime = Mathf.Clamp(time, 0f, duration);
 
-        // If playing, restart from the new position (keeps audio in sync)
         if (isPlaying)
         {
             BeginPlayback();
@@ -1145,7 +1235,6 @@ public class ChartEditorWindow : EditorWindow
 
     private void PlayAudio()
     {
-        // Pressing play at the very end starts over
         if (currentTime >= duration - 0.001f)
         {
             currentTime = 0f;
@@ -1165,13 +1254,8 @@ public class ChartEditorWindow : EditorWindow
                 int startSample = Mathf.Clamp((int)(currentTime * audioClip.frequency), 0, Mathf.Max(0, audioClip.samples - 1));
                 playPreviewClipMethod.Invoke(null, new object[] { audioClip, startSample, false });
             }
-            else
-            {
-                Debug.LogWarning("AudioUtil.PlayPreviewClip was not found in this Unity version. The playhead moves, but there is no sound.");
-            }
         }
 
-        // Without an audio clip the playhead runs on an internal clock, so charts can be tested silently
         audioStartTime = EditorApplication.timeSinceStartup - currentTime;
         isPlaying = true;
     }
@@ -1196,10 +1280,6 @@ public class ChartEditorWindow : EditorWindow
         currentTime = 0f;
     }
 
-    // ---------------------------------------------------------------------
-    // Formatting
-    // ---------------------------------------------------------------------
-
     private static string FormatBeat(float beat)
     {
         return "B" + beat.ToString("0.00", Inv);
@@ -1212,15 +1292,12 @@ public class ChartEditorWindow : EditorWindow
         return minutes + ":" + rest.ToString("00.0", Inv);
     }
 
-    // ---------------------------------------------------------------------
-    // Project
-    // ---------------------------------------------------------------------
-
     private void NewProject()
     {
         StopAudio();
 
         projectName = "New Chart";
+        artistName = "";
         bpm = 120f;
         duration = 60f;
         currentTime = 0f;
@@ -1250,6 +1327,7 @@ public class ChartEditorWindow : EditorWindow
                 ChartProjectData data = JsonUtility.FromJson<ChartProjectData>(jsonContent);
 
                 projectName = data.projectName;
+                artistName = data.artistName;
                 bpm = data.bpm;
                 duration = data.duration;
                 currentTime = 0f;
@@ -1265,17 +1343,12 @@ public class ChartEditorWindow : EditorWindow
                 keyframeScroll = Vector2.zero;
                 SortNotes();
 
-                // Load audio clip if path exists
                 if (!string.IsNullOrEmpty(data.audioClipPath))
                 {
                     audioClip = AssetDatabase.LoadAssetAtPath<AudioClip>(data.audioClipPath);
                     if (audioClip != null)
                     {
                         duration = audioClip.length;
-                    }
-                    else
-                    {
-                        Debug.LogWarning($"Audio clip not found at {data.audioClipPath}");
                     }
                 }
                 else
@@ -1309,6 +1382,7 @@ public class ChartEditorWindow : EditorWindow
                 ChartProjectData data = new ChartProjectData
                 {
                     projectName = projectName,
+                    artistName = artistName,
                     bpm = bpm,
                     duration = duration,
                     audioClipPath = audioClip != null ? AssetDatabase.GetAssetPath(audioClip) : "",
@@ -1320,7 +1394,6 @@ public class ChartEditorWindow : EditorWindow
                 File.WriteAllText(path, jsonContent);
                 projectFilePath = path;
 
-                // Refresh Unity's asset database so the file appears immediately
                 AssetDatabase.Refresh();
 
                 Debug.Log($"Project saved: {path}");
@@ -1338,9 +1411,10 @@ public class ChartEditorWindow : EditorWindow
 public class ChartProjectData
 {
     public string projectName;
+    public string artistName;
     public float bpm;
     public float duration;
-    public string audioClipPath; // Store path to audio clip
+    public string audioClipPath;
     public int laneCount;
     public List<ChartNote> notes = new List<ChartNote>();
 }
