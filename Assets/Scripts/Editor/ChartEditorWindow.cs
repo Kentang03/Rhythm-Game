@@ -306,7 +306,7 @@ public class ChartEditorWindow : EditorWindow
         EditorGUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
 
-        float fieldWidth = Mathf.Min(600f, position.width * 0.6f);
+        float fieldWidth = Mathf.Min(450f, position.width * 0.45f);
         EditorGUIUtility.labelWidth = 100f;
 
         EditorGUILayout.BeginVertical(GUILayout.Width(fieldWidth));
@@ -325,8 +325,6 @@ public class ChartEditorWindow : EditorWindow
     {
         EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
         EditorGUILayout.LabelField("Chart Configuration", headerBoxStyle);
-
-        EditorGUILayout.Space(2);
 
         EditorGUIUtility.labelWidth = 105f;
 
@@ -392,7 +390,6 @@ public class ChartEditorWindow : EditorWindow
     {
         EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
 
-        // Alignment Fix: Place "+ Add music" on the exact same header row
         EditorGUILayout.BeginHorizontal();
         EditorGUILayout.LabelField("Audio Playback", headerBoxStyle);
         if (GUILayout.Button(audioClip != null ? "Change" : "+ Add music", GUILayout.Width(82), GUILayout.Height(20)))
@@ -401,7 +398,6 @@ public class ChartEditorWindow : EditorWindow
         }
         EditorGUILayout.EndHorizontal();
 
-        // Track title / status
         GUILayout.Label(audioClip != null ? audioClip.name : "No music loaded", mutedLabel, GUILayout.Height(18));
 
         EditorGUILayout.Space(4);
@@ -430,7 +426,8 @@ public class ChartEditorWindow : EditorWindow
         GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
 
-        // Seek Bar
+        EditorGUILayout.Space(6);
+
         EditorGUI.BeginChangeCheck();
         float seek = GUILayout.HorizontalSlider(currentTime, 0f, duration);
         if (EditorGUI.EndChangeCheck())
@@ -438,7 +435,6 @@ public class ChartEditorWindow : EditorWindow
             SeekTo(seek);
         }
 
-        // Space added to push "Controls" label down away from the slider bar
         EditorGUILayout.Space(14);
         GUILayout.Label("Controls:\n• Scroll Wheel: Move Timeline Left/Right\n• Ctrl/Cmd + Scroll Wheel: Zoom In/Out\n• Space: Play / Pause", hintStyle);
 
@@ -522,13 +518,12 @@ public class ChartEditorWindow : EditorWindow
             keyframeViewDirty = true;
         }
         GUILayout.FlexibleSpace();
-        EditorGUILayout.Space(12);
         followPlayhead = GUILayout.Toggle(followPlayhead, new GUIContent("Follow", "Auto-scroll list with playhead"), GUILayout.Width(55));
         EditorGUILayout.EndHorizontal();
 
         EnsureKeyframeView();
 
-        EditorGUILayout.Space(15);
+        EditorGUILayout.Space(2);
 
         // Excel Table Header with Box Separators
         Rect header = GUILayoutUtility.GetRect(0, 20, GUILayout.ExpandWidth(true));
@@ -546,7 +541,7 @@ public class ChartEditorWindow : EditorWindow
         EditorGUI.DrawRect(new Rect(header.x + col1W + col2W, header.y, 1f, header.height), gridBorderColor);
         EditorGUI.DrawRect(new Rect(header.x, header.y + header.height - 1f, header.width, 1f), gridBorderColor);
 
-        Rect listRect = GUILayoutUtility.GetRect(0, KeyframeListHeight, GUILayout.ExpandWidth(true));
+        Rect listRect = GUILayoutUtility.GetRect(0, KeyframeListHeight - 20, GUILayout.ExpandWidth(true));
         EditorGUI.DrawRect(listRect, new Color(0.16f, 0.16f, 0.16f, 1f));
         DrawKeyframeList(listRect, col1W, col2W);
 
@@ -749,27 +744,47 @@ public class ChartEditorWindow : EditorWindow
         }
     }
 
+    // Overlap Prevention Helper
     private bool CanPlaceNote(int lane, float startBeat, float endBeat, ChartNoteType type, ChartNote ignoreNote = null)
     {
-        if (type == ChartNoteType.Catch)
-            return true;
-
         for (int i = 0; i < notes.Count; i++)
         {
             ChartNote n = notes[i];
             if (n == ignoreNote || n.lane != lane) continue;
 
-            if (n.type == ChartNoteType.Catch) continue;
+            // RULE 1: Prevents notes of the EXACT SAME TYPE from stacking on the exact same beat
+            if (n.type == type && Mathf.Abs(n.beat - startBeat) < 0.0001f)
+            {
+                return false;
+            }
 
+            // RULE 2: Catch notes can coexist with Tap/Hold notes at the same beat or within a Hold duration,
+            // but cannot stack on another Catch note (handled by Rule 1 above).
+            if (type == ChartNoteType.Catch || n.type == ChartNoteType.Catch)
+            {
+                continue;
+            }
+
+            // RULE 3: Tap & Hold overlap rules
             float existingStart = n.beat;
             float existingEnd = (n.type == ChartNoteType.Hold) ? (n.beat + n.length) : n.beat;
 
             float newStart = startBeat;
             float newEnd = (type == ChartNoteType.Hold) ? endBeat : startBeat;
 
-            if (newStart <= existingEnd - 0.0001f && newEnd >= existingStart + 0.0001f)
+            if (n.type == ChartNoteType.Hold || type == ChartNoteType.Hold)
             {
-                return false;
+                if (newStart < existingEnd - 0.0001f && newEnd > existingStart + 0.0001f)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (Mathf.Abs(newStart - existingStart) < 0.0001f)
+                {
+                    return false;
+                }
             }
         }
 
