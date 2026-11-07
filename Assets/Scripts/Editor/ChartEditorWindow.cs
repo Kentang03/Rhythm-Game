@@ -200,7 +200,7 @@ public class ChartEditorWindow : EditorWindow
         EditorGUILayout.Space(6);
 
         // 3 Uniform Columns
-        float totalWidth = position.width - 24f;
+        float totalWidth = editorContentWidth  - 24f;
         float columnWidth = Mathf.Max(280f, totalWidth / 3f);
 
         EditorGUILayout.BeginHorizontal();
@@ -1290,7 +1290,7 @@ public class ChartEditorWindow : EditorWindow
             EditorGUILayout.LabelField("Approach (beats)", mutedLabel);
             previewLeadBeats = EditorGUILayout.Slider(previewLeadBeats, 0.5f, 8f);
 
-            Rect previewRect = GUILayoutUtility.GetRect(0f, 146f, GUILayout.ExpandWidth(true), GUILayout.ExpandWidth(true));
+            Rect previewRect = GUILayoutUtility.GetRect(0f, 146f, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
             DrawLanePreviewContents(previewRect);
         }
         else
@@ -1314,7 +1314,7 @@ public class ChartEditorWindow : EditorWindow
         for (int laneIndex = 0; laneIndex < LaneCount; laneIndex++)
         {
             Vector2 direction = GetPreviewLaneDirection(laneIndex);
-            Vector2 perpendicular = new Vector2 (-direction.y, direction.x);
+            Vector2 perpendicular = new Vector2(-direction.y, direction.x);
             int armLaneCount = GetPreviewLaneCountForArm(laneIndex % 4);
             int parallelIndex = laneIndex / 4;
             float stripThickness = crossThickness / armLaneCount;
@@ -1375,7 +1375,7 @@ public class ChartEditorWindow : EditorWindow
         }
 
         float targetSize = Mathf.Max(18f, crossThickness * 0.48f);
-        EditorGUI.DrawRect(new Rect(center.x - targetSize, center.y - targetSize * 0.5f, targetSize, targetSize), new Color (1f, 0.34f, 0.35f, 1f));
+        EditorGUI.DrawRect(new Rect(center.x - targetSize * 0.5f, center.y - targetSize * 0.5f, targetSize, targetSize), new Color(1f, 0.34f, 0.35f, 1f));
         EditorGUI.DrawRect(new Rect(center.x - 4f, center.y - 4f, 8f, 8f), new Color(0.12f, 0.13f, 0.16f, 1f));
         GUI.Label(new Rect(previewRect.x + 10f, previewRect.yMax - 19f, previewRect.width - 20f, 14f), "L1 kiri | L2 atas | L3 kanan | L4 bawah", mutedLabel);
     }
