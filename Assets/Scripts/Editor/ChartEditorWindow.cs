@@ -33,10 +33,10 @@ public class ChartEditorWindow : EditorWindow
 
     // Snap & Subdivision synchronization
     private int snapDivision = 4; // Default subdivision = 4
-    private static readonly int[] SnapValues = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+    private static readonly int[] SnapValues = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32};
     private static readonly string[] SnapLabels = {
         "2 beats", "3 beats", "4 beats", "5 beats", "6 beats", "7 beats", "8 beats",
-        "9 beats", "10 beats", "11 beats", "12 beats", "13 beats", "14 beats", "15 beats", "16 beats"
+        "9 beats", "10 beats", "11 beats", "12 beats", "13 beats", "14 beats", "15 beats", "16 beats", "24 beats", "32 beats"
     };
 
     // Timeline visualization
@@ -57,7 +57,7 @@ public class ChartEditorWindow : EditorWindow
     private Color measureLineColor = new Color(0.7f, 0.7f, 0.7f, 1f);
     private Color playheadColor = new Color(0.2f, 0.6f, 1f, 1f);
     private Color gridBorderColor = new Color(0.32f, 0.32f, 0.32f, 1f);
-    private static readonly Color TapColor = new Color(0.30f, 0.79f, 0.94f, 1f);
+    private static readonly Color TapColor = new Color(0.4f, 0.79f, 0.94f, 1f);
     private static readonly Color HoldColor = new Color(0.96f, 0.64f, 0.38f, 1f);
     private static readonly Color CatchColor = new Color(1f, 1f, 1f, 1f); // White
 
@@ -90,7 +90,6 @@ public class ChartEditorWindow : EditorWindow
     private float holdPreviewLength;
 
     // Keyframe panel
-    private static readonly string[] FilterLabels = { "All", "Tap", "Hold", "Catch" };
     private int keyframeFilter = 0;
     private bool followPlayhead = true;
     private Vector2 keyframeScroll;
@@ -111,6 +110,10 @@ public class ChartEditorWindow : EditorWindow
     private float CurrentBeat => currentTime / SecondsPerBeat;
     private float SnapBeats => 1f / snapDivision;
     private float LaneHeight => (timelineHeight - RulerHeight - FooterHeight) / LaneCount;
+
+    private int tapCount = 0;
+    private int holdCount = 0;
+    private int catchCount = 0;
 
     [MenuItem("Window/Chart Editor")]
     public static void ShowWindow()
@@ -260,6 +263,10 @@ public class ChartEditorWindow : EditorWindow
     private void HandleGlobalShortcuts()
     {
         Event e = Event.current;
+        if (e.type == EventType.MouseDown && e.button == 0 && EditorGUIUtility.editingTextField)
+        {
+            GUI.FocusControl(null);
+        }
         if (e.type == EventType.KeyDown)
         {
             if (e.keyCode == KeyCode.Space && !EditorGUIUtility.editingTextField)
@@ -270,6 +277,30 @@ public class ChartEditorWindow : EditorWindow
             else if (e.keyCode == KeyCode.Escape && isPlacingHold)
             {
                 isPlacingHold = false;
+                e.Use();
+                Repaint();
+            }
+            else if (e.keyCode == KeyCode.S && !EditorGUIUtility.editingTextField)
+            {
+                currentTime = 0f;
+                e.Use();
+                Repaint();
+            }
+            else if (e.keyCode == KeyCode.Alpha1 && !EditorGUIUtility.editingTextField)
+            {
+                selectedNoteType = ChartNoteType.Tap;
+                e.Use();
+                Repaint();
+            }
+            else if (e.keyCode == KeyCode.Alpha2 && !EditorGUIUtility.editingTextField)
+            {
+                selectedNoteType = ChartNoteType.Hold;
+                e.Use();
+                Repaint();
+            }
+            else if (e.keyCode == KeyCode.Alpha3 && !EditorGUIUtility.editingTextField)
+            {
+                selectedNoteType = ChartNoteType.Catch;
                 e.Use();
                 Repaint();
             }
@@ -381,6 +412,12 @@ public class ChartEditorWindow : EditorWindow
         else
         {
             EditorGUILayout.LabelField("Click lane to place note. Right-click note to delete.", hintStyle);
+        }
+
+        if (GUILayout.Button("Clear Note", GUILayout.Height(StandardButtonHeight), GUILayout.Width(70)))
+        {
+            notes.Clear();
+            keyframeView.Clear();
         }
 
         EditorGUILayout.EndVertical();
@@ -495,6 +532,27 @@ public class ChartEditorWindow : EditorWindow
     private void DrawKeyframePanel(float width)
     {
         EnsureKeyframeView();
+        tapCount = 0;
+        holdCount = 0;
+        catchCount = 0;
+
+        for (int i = 0; i < notes.Count; i++)
+        {
+            ChartNote note = notes[i];
+            if (note.type == ChartNoteType.Tap)
+            {
+                tapCount++;
+            }
+            else if (note.type == ChartNoteType.Hold)
+            {
+                holdCount++;
+            }
+            else if (note.type == ChartNoteType.Catch)
+            {
+                catchCount++;
+            }
+        }
+        string[] FilterLabels = { $"All ({notes.Count})", $"Tap ({tapCount})", $"Hold ({holdCount})", $"Catch ({catchCount})" };
 
         EditorGUILayout.BeginVertical("box", GUILayout.Width(width), GUILayout.Height(PanelHeight));
 
@@ -512,7 +570,7 @@ public class ChartEditorWindow : EditorWindow
 
         EditorGUILayout.BeginHorizontal();
         EditorGUI.BeginChangeCheck();
-        keyframeFilter = GUILayout.Toolbar(keyframeFilter, FilterLabels, GUILayout.Width(170), GUILayout.Height(StandardButtonHeight));
+        keyframeFilter = GUILayout.Toolbar(keyframeFilter, FilterLabels, GUILayout.Width(250), GUILayout.Height(StandardButtonHeight));
         if (EditorGUI.EndChangeCheck())
         {
             keyframeViewDirty = true;
