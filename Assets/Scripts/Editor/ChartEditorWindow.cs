@@ -72,6 +72,9 @@ public class ChartEditorWindow : EditorWindow
     private MethodInfo playPreviewClipMethod;
     private MethodInfo stopAllPreviewClipsMethod;
     private float laneLength = 4f;
+    private bool showLanePreview = true;
+    private float previewLeadBeats = 2f;
+    private float editorContentWidth;
 
     // Layout constants
     private const float PanelHeight = 220f;
@@ -81,6 +84,8 @@ public class ChartEditorWindow : EditorWindow
     private const float FooterHeight = 20f;
     private const float NoteHeadWidth = 14f;
     private const float StandardButtonHeight = 22f;
+    private const float LanePreviewSidebarWidth = 300f;
+    private const float LanePreviewSidebarGap = 8f;
 
     // Note editing
     private ChartNoteType selectedNoteType = ChartNoteType.Tap;
@@ -110,18 +115,21 @@ public class ChartEditorWindow : EditorWindow
     private float TotalBeats => duration / SecondsPerBeat;
     private float CurrentBeat => currentTime / SecondsPerBeat;
     private float SnapBeats => 1f / snapDivision;
+    private float TimelineNoteHeadWidth => Mathf.Clamp(SecondsPerBeat * pixelsPerSecond * SnapBeats * 0.68f, 1f, NoteHeadWidth);
     private float LaneHeight => (timelineHeight - RulerHeight - FooterHeight) / LaneCount;
 
     [MenuItem("Window/Chart Editor")]
     public static void ShowWindow()
     {
         ChartEditorWindow window = GetWindow<ChartEditorWindow>("Chart Editor");
-        window.minSize = new Vector2(980, 680);
+        window.minSize = new Vector2(1280, 850);
         window.Show();
     }
 
     private void OnEnable()
     {
+        minSize = new Vector2(1280, 850);
+
         unityEditorAssembly = typeof(AudioImporter).Assembly;
         audioUtilClass = unityEditorAssembly.GetType("UnityEditor.AudioUtil");
 
@@ -173,6 +181,11 @@ public class ChartEditorWindow : EditorWindow
         EnsureStyles();
         HandleGlobalShortcuts();
 
+        editorContentWidth = Mathf.Max(900f, position.width - LanePreviewSidebarWidth - LanePreviewSidebarGap - 8f);
+
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.BeginVertical(GUILayout.Width(editorContentWidth), GUILayout.ExpandHeight(true));
+
         DrawToolbar();
 
         EditorGUILayout.Space(6);
@@ -183,7 +196,7 @@ public class ChartEditorWindow : EditorWindow
         EditorGUILayout.Space(6);
 
         // 3 Uniform Columns
-        float totalWidth = position.width - 24f;
+        float totalWidth = editorContentWidth - 24f;
         float columnWidth = Mathf.Max(280f, totalWidth / 3f);
 
         EditorGUILayout.BeginHorizontal();
@@ -207,6 +220,12 @@ public class ChartEditorWindow : EditorWindow
 
         // Timeline
         DrawTimeline();
+
+        EditorGUILayout.EndVertical();
+
+        GUILayout.Space(LanePreviewSidebarGap);
+        DrawLanePreviewSidebar();
+        EditorGUILayout.EndHorizontal();
 
         if (Event.current.type == EventType.MouseDrag || isPlacingHold)
         {
@@ -767,7 +786,10 @@ public class ChartEditorWindow : EditorWindow
             float newStart = startBeat;
             float newEnd = (type == ChartNoteType.Hold) ? endBeat : startBeat;
 
-            if (newStart <= existingEnd - 0.0001f && newEnd >= existingStart + 0.0001f)
+            // Include both endpoints so a Tap cannot share the Hold's start/end beat,
+            // and duplicate notes cannot occupy the exact same lane and beat.
+            const float overlapTolerance = 0.0001f;
+            if (newStart <= existingEnd + overlapTolerance && newEnd >= existingStart - overlapTolerance)
             {
                 return false;
             }
@@ -826,14 +848,15 @@ public class ChartEditorWindow : EditorWindow
         float laneHeight = LaneHeight;
         float x = beat * SecondsPerBeat * pixelsPerSecond;
         float y = RulerHeight + (lane - 1) * laneHeight + 3f;
-        float width = NoteHeadWidth;
+        float headWidth = TimelineNoteHeadWidth;
+        float width = headWidth;
 
         if (type == ChartNoteType.Hold)
         {
             width += length * SecondsPerBeat * pixelsPerSecond;
         }
 
-        return new Rect(x - NoteHeadWidth * 0.5f, y, width, laneHeight - 6f);
+        return new Rect(x - headWidth * 0.5f, y, width, laneHeight - 6f);
     }
 
     private ChartNote HitTestNote(Vector2 position)
@@ -917,7 +940,7 @@ public class ChartEditorWindow : EditorWindow
     {
         if (type == ChartNoteType.Catch)
         {
-            float catchWidth = NoteHeadWidth * 0.75f;
+            float catchWidth = TimelineNoteHeadWidth * 0.75f;
             float catchHeight = r.height * 0.55f;
             Rect catchRect = new Rect(
                 r.x + (r.width - catchWidth) * 0.5f,
@@ -942,7 +965,7 @@ public class ChartEditorWindow : EditorWindow
 
         Color headColor = baseColor;
         headColor.a = alpha;
-        EditorGUI.DrawRect(new Rect(r.x, r.y, Mathf.Min(NoteHeadWidth, r.width), r.height), headColor);
+        EditorGUI.DrawRect(new Rect(r.x, r.y, Mathf.Min(TimelineNoteHeadWidth, r.width), r.height), headColor);
     }
 
     private void DrawTimeline()
@@ -956,7 +979,7 @@ public class ChartEditorWindow : EditorWindow
 
         timelineWidth = duration * pixelsPerSecond;
 
-        Rect scrollViewRect = GUILayoutUtility.GetRect(position.width - 20, timelineHeight + 15);
+        Rect scrollViewRect = GUILayoutUtility.GetRect(Mathf.Max(280f, editorContentWidth - 20f), timelineHeight + 15);
         if (Event.current.type == EventType.Repaint)
         {
             timelineViewWidth = scrollViewRect.width;
@@ -1065,6 +1088,180 @@ public class ChartEditorWindow : EditorWindow
         };
         Handles.DrawAAConvexPolygon(trianglePoints);
         Handles.EndGUI();
+    }
+
+    private void DrawLanePreviewSidebar()
+    {
+        EditorGUILayout.BeginVertical("box", GUILayout.Width(LanePreviewSidebarWidth), GUILayout.ExpandHeight(true));
+
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.LabelField("Lane Preview", headerBoxStyle);
+        if (GUILayout.Button(showLanePreview ? "Hide" : "Show", EditorStyles.toolbarButton, GUILayout.Width(48)))
+        {
+            showLanePreview = !showLanePreview;
+        }
+        EditorGUILayout.EndHorizontal();
+
+        if (showLanePreview)
+        {
+            EditorGUILayout.LabelField("Beat " + CurrentBeat.ToString("0.00", Inv), beatStyle);
+            EditorGUILayout.LabelField(isPlaying ? "Playing chart preview" : "Play or scrub to preview notes", mutedLabel);
+            EditorGUILayout.LabelField("Approach (beats)", mutedLabel);
+            previewLeadBeats = EditorGUILayout.Slider(previewLeadBeats, 0.5f, 8f);
+
+            Rect previewRect = GUILayoutUtility.GetRect(0f, 146f, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+            DrawLanePreviewContents(previewRect);
+        }
+        else
+        {
+            GUILayout.FlexibleSpace();
+        }
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawLanePreviewContents(Rect previewRect)
+    {
+        EditorGUI.DrawRect(previewRect, new Color(0.12f, 0.13f, 0.16f, 1f));
+
+        float arenaSize = Mathf.Max(120f, Mathf.Min(previewRect.width - 24f, previewRect.height - 42f));
+        float armLength = arenaSize * 0.43f;
+        float crossThickness = Mathf.Clamp(arenaSize * 0.18f, 30f, 48f);
+        Vector2 center = previewRect.center;
+        float missBeats = 1f;
+
+        // Each lane runs from its outer end toward the shared judgment point.
+        for (int laneIndex = 0; laneIndex < LaneCount; laneIndex++)
+        {
+            Vector2 direction = GetPreviewLaneDirection(laneIndex);
+            Vector2 perpendicular = new Vector2(-direction.y, direction.x);
+            int armLaneCount = GetPreviewLaneCountForArm(laneIndex % 4);
+            int parallelIndex = laneIndex / 4;
+            float stripThickness = crossThickness / armLaneCount;
+            float laneOffset = (parallelIndex - (armLaneCount - 1) * 0.5f) * stripThickness;
+            Vector2 laneCenter = center + perpendicular * laneOffset;
+            Vector2 outerPoint = laneCenter - direction * armLength;
+
+            Rect laneRect = GetLaneStripRect(outerPoint, laneCenter, direction, stripThickness - 1f);
+            EditorGUI.DrawRect(laneRect, new Color(0.31f, 0.33f, 0.38f, 1f));
+
+            Vector2 labelPoint = outerPoint - direction * 10f;
+            GUI.Label(new Rect(labelPoint.x - 20f, labelPoint.y - 8f, 40f, 16f), "L" + (laneIndex + 1), rowCenterStyle);
+        }
+
+        float currentBeat = CurrentBeat;
+        float safeLeadBeats = Mathf.Max(0.01f, previewLeadBeats);
+
+        for (int i = 0; i < notes.Count; i++)
+        {
+            ChartNote note = notes[i];
+            if (note == null || note.lane < 1 || note.lane > LaneCount) continue;
+
+            bool isHold = note.type == ChartNoteType.Hold;
+            float endBeat = isHold ? note.beat + Mathf.Max(0f, note.length) : note.beat;
+            bool inPreviewRange = isHold
+                ? note.beat <= currentBeat + safeLeadBeats && endBeat >= currentBeat - missBeats
+                : note.beat >= currentBeat - missBeats && note.beat <= currentBeat + safeLeadBeats;
+            if (!inPreviewRange) continue;
+
+            int laneIndex = note.lane - 1;
+            Vector2 direction = GetPreviewLaneDirection(laneIndex);
+            Vector2 perpendicular = new Vector2(-direction.y, direction.x);
+            int armLaneCount = GetPreviewLaneCountForArm(laneIndex % 4);
+            int parallelIndex = laneIndex / 4;
+            float stripThickness = crossThickness / armLaneCount;
+            float laneOffset = (parallelIndex - (armLaneCount - 1) * 0.5f) * stripThickness;
+            Vector2 laneCenter = center + perpendicular * laneOffset;
+            Vector2 outerPoint = laneCenter - direction * armLength;
+
+            float startProgress = Mathf.Clamp01(1f - (note.beat - currentBeat) / safeLeadBeats);
+            Vector2 notePoint = Vector2.Lerp(outerPoint, laneCenter, startProgress);
+            float fadeBeat = isHold ? endBeat : note.beat;
+            float alpha = fadeBeat < currentBeat
+                ? Mathf.Clamp01(1f - (currentBeat - fadeBeat) / missBeats)
+                : 1f;
+            Color noteColor = note.type == ChartNoteType.Tap ? TapColor
+                : (note.type == ChartNoteType.Hold ? HoldColor : CatchColor);
+
+            if (isHold)
+            {
+                float endProgress = Mathf.Clamp01(1f - (endBeat - currentBeat) / safeLeadBeats);
+                Vector2 holdEndPoint = Vector2.Lerp(outerPoint, laneCenter, endProgress);
+                Color bodyColor = noteColor;
+                bodyColor.a *= 0.58f * alpha;
+                DrawLanePreviewHold(notePoint, holdEndPoint, direction, stripThickness, bodyColor);
+            }
+            noteColor.a *= alpha;
+            float markerLength = note.type == ChartNoteType.Catch ? 6f : 9f;
+            DrawLanePreviewMarker(notePoint, direction, stripThickness, markerLength, noteColor);
+        }
+
+        float targetSize = Mathf.Max(18f, crossThickness * 0.48f);
+        EditorGUI.DrawRect(new Rect(center.x - targetSize * 0.5f, center.y - targetSize * 0.5f, targetSize, targetSize), new Color(1f, 0.84f, 0.35f, 1f));
+        EditorGUI.DrawRect(new Rect(center.x - 4f, center.y - 4f, 8f, 8f), new Color(0.12f, 0.13f, 0.16f, 1f));
+        GUI.Label(new Rect(previewRect.x + 10f, previewRect.yMax - 19f, previewRect.width - 20f, 14f),
+            "L1 kiri  |  L2 atas  |  L3 kanan  |  L4 bawah",
+            mutedLabel);
+    }
+
+    private Vector2 GetPreviewLaneDirection(int laneIndex)
+    {
+        switch (laneIndex % 4)
+        {
+            case 0: return new Vector2(1f, 0f);  // Left to center
+            case 1: return new Vector2(0f, 1f);  // Top to center
+            case 2: return new Vector2(-1f, 0f); // Right to center
+            default: return new Vector2(0f, -1f); // Bottom to center
+        }
+    }
+
+    private int GetPreviewLaneCountForArm(int armIndex)
+    {
+        int count = 0;
+        for (int laneIndex = armIndex; laneIndex < LaneCount; laneIndex += 4)
+        {
+            count++;
+        }
+        return Mathf.Max(1, count);
+    }
+
+    private Rect GetLaneStripRect(Vector2 outerPoint, Vector2 centerPoint, Vector2 direction, float thickness)
+    {
+        if (Mathf.Abs(direction.x) > 0.5f)
+        {
+            return new Rect(
+                Mathf.Min(outerPoint.x, centerPoint.x),
+                centerPoint.y - thickness * 0.5f,
+                Mathf.Abs(centerPoint.x - outerPoint.x),
+                thickness);
+        }
+
+        return new Rect(
+            centerPoint.x - thickness * 0.5f,
+            Mathf.Min(outerPoint.y, centerPoint.y),
+            thickness,
+            Mathf.Abs(centerPoint.y - outerPoint.y));
+    }
+
+    private void DrawLanePreviewMarker(Vector2 point, Vector2 direction, float laneThickness, float markerLength, Color color)
+    {
+        float markerWidth = Mathf.Max(7f, laneThickness * 0.72f);
+        Rect marker = Mathf.Abs(direction.x) > 0.5f
+            ? new Rect(point.x - markerLength * 0.5f, point.y - markerWidth * 0.5f, markerLength, markerWidth)
+            : new Rect(point.x - markerWidth * 0.5f, point.y - markerLength * 0.5f, markerWidth, markerLength);
+        EditorGUI.DrawRect(marker, color);
+    }
+
+    private void DrawLanePreviewHold(Vector2 start, Vector2 end, Vector2 direction, float laneThickness, Color color)
+    {
+        float bodyThickness = Mathf.Max(3f, laneThickness * 0.38f);
+        Rect body = Mathf.Abs(direction.x) > 0.5f
+            ? new Rect(Mathf.Min(start.x, end.x), start.y - bodyThickness * 0.5f, Mathf.Abs(end.x - start.x), bodyThickness)
+            : new Rect(start.x - bodyThickness * 0.5f, Mathf.Min(start.y, end.y), bodyThickness, Mathf.Abs(end.y - start.y));
+        if (body.width > 0f && body.height > 0f)
+        {
+            EditorGUI.DrawRect(body, color);
+        }
     }
 
     private bool isScrubbing = false;
