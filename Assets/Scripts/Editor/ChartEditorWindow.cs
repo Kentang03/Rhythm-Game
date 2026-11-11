@@ -33,7 +33,7 @@ public class ChartEditorWindow : EditorWindow
 
     // Snap & Subdivision synchronization
     private int snapDivision = 4; // Default subdivision = 4
-    private static readonly int[] SnapValues = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32};
+    private static readonly int[] SnapValues = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32 };
     private static readonly string[] SnapLabels = {
         "2 beats", "3 beats", "4 beats", "5 beats", "6 beats", "7 beats", "8 beats",
         "9 beats", "10 beats", "11 beats", "12 beats", "13 beats", "14 beats", "15 beats", "16 beats", "24 beats", "32 beats"
@@ -200,7 +200,7 @@ public class ChartEditorWindow : EditorWindow
         EditorGUILayout.Space(6);
 
         // 3 Uniform Columns
-        float totalWidth = editorContentWidth  - 24f;
+        float totalWidth = editorContentWidth - 24f;
         float columnWidth = Mathf.Max(280f, totalWidth / 3f);
 
         EditorGUILayout.BeginHorizontal();
@@ -1307,27 +1307,34 @@ public class ChartEditorWindow : EditorWindow
 
         float arenaSize = Mathf.Max(120f, Mathf.Min(previewRect.width - 24f, previewRect.height - 42f));
         float armLength = arenaSize * 0.50f;
-        float crossThickness = Mathf.Clamp(arenaSize * 0.18f, 20f, 30f);
+        float laneThickness = Mathf.Clamp(arenaSize * 0.14f, 22f, 36f);
+
         Vector2 center = previewRect.center;
         float missBeats = 1f;
 
         for (int laneIndex = 0; laneIndex < LaneCount; laneIndex++)
         {
             Vector2 direction = GetPreviewLaneDirection(laneIndex);
-            Vector2 perpendicular = new Vector2(-direction.y, direction.x);
-            int armLaneCount = GetPreviewLaneCountForArm(laneIndex % 4);
-            int parallelIndex = laneIndex / 4;
-            float stripThickness = crossThickness / armLaneCount;
-            float laneOffset = (parallelIndex - (armLaneCount - 1) * 0.5f) * stripThickness;
-            Vector2 laneCenter = center + perpendicular * laneOffset;
-            Vector2 outerPoint = laneCenter - direction * armLength;
+            Vector2 outerPoint = center - direction * armLength;
 
-            Rect laneRect = GetLaneStripRect(outerPoint, laneCenter, direction, stripThickness - 1f);
-            EditorGUI.DrawRect(laneRect, new Color(0.31f, 0.33f, 0.38f, 1f));
+            Color laneColor = laneIndex < 4
+                ? new Color(0.31f, 0.33f, 0.38f, 1f)
+                : new Color(0.27f, 0.31f, 0.40f, 0.85f);
 
-            Vector2 labelPoint = outerPoint - direction * 10f;
+            DrawLanePreviewQuad(outerPoint, center, laneThickness - 1f, laneColor);
+
+            Vector2 labelPoint = outerPoint - direction * 12f;
             GUI.Label(new Rect(labelPoint.x - 20f, labelPoint.y - 8f, 40f, 16f), "L" + (laneIndex + 1), rowCenterStyle);
         }
+
+        float targetSize = Mathf.Max(18f, laneThickness * 0.7f);
+        EditorGUI.DrawRect(
+            new Rect(center.x - targetSize * 0.5f, center.y - targetSize * 0.5f, targetSize, targetSize),
+            new Color(1f, 0.34f, 0.35f, 1f));
+
+        EditorGUI.DrawRect(
+            new Rect(center.x - 4f, center.y - 4f, 8f, 8f),
+            new Color(0.12f, 0.13f, 0.16f, 1f));
 
         float currentBeat = CurrentBeat;
         float safeLeadBeats = Mathf.Max(0.01f, previewLeadBeats);
@@ -1339,99 +1346,108 @@ public class ChartEditorWindow : EditorWindow
 
             bool isHold = note.type == ChartNoteType.Hold;
             float endBeat = isHold ? note.beat + Mathf.Max(0f, note.length) : note.beat;
+
             bool inPreviewRange = isHold
                 ? note.beat <= currentBeat + safeLeadBeats && endBeat >= currentBeat - missBeats
                 : note.beat >= currentBeat - missBeats && note.beat <= currentBeat + safeLeadBeats;
+
             if (!inPreviewRange) continue;
 
             int laneIndex = note.lane - 1;
             Vector2 direction = GetPreviewLaneDirection(laneIndex);
-            Vector2 perpendicular = new Vector2(-direction.y, -direction.x);
-            int armLaneCount = GetPreviewLaneCountForArm(laneIndex % 4);
-            int parallelIndex = laneIndex / 4;
-            float stripThickness = crossThickness / armLaneCount;
-            float laneOffset = (parallelIndex - (armLaneCount - 1) * 0.5f) * stripThickness;
-            Vector2 laneCenter = center + perpendicular * laneOffset;
-            Vector2 outerPoint = laneCenter - direction * armLength;
+            Vector2 outerPoint = center - direction * armLength;
 
             float startProgress = Mathf.Clamp01(1f - (note.beat - currentBeat) / safeLeadBeats);
-            Vector2 notePoint = Vector2.Lerp(outerPoint, laneCenter, startProgress);
+            Vector2 notePoint = Vector2.Lerp(outerPoint, center, startProgress);
+
             float fadeBeat = isHold ? endBeat : note.beat;
             float alpha = fadeBeat < currentBeat
-                ? Mathf.Clamp01(1f - (currentBeat - fadeBeat) / missBeats) : 1f;
+                ? Mathf.Clamp01(1f - (currentBeat - fadeBeat) / missBeats)
+                : 1f;
+
             Color noteColor = note.type == ChartNoteType.Tap ? TapColor : (note.type == ChartNoteType.Hold ? HoldColor : CatchColor);
 
             if (isHold)
             {
                 float endProgress = Mathf.Clamp01(1f - (endBeat - currentBeat) / safeLeadBeats);
-                Vector2 holdEndPoint = Vector2.Lerp(outerPoint, laneCenter, endProgress);
+                Vector2 holdEndPoint = Vector2.Lerp(outerPoint, center, endProgress);
+
                 Color bodyColor = noteColor;
                 bodyColor.a *= 0.58f * alpha;
-                DrawLanePreviewHold(notePoint, holdEndPoint, direction, stripThickness, bodyColor);
+                DrawLanePreviewQuad(notePoint, holdEndPoint, Mathf.Max(3f, laneThickness * 0.30f), bodyColor);
             }
+
             noteColor.a *= alpha;
             float markerLength = note.type == ChartNoteType.Catch ? 6f : 9f;
-            DrawLanePreviewMarker(notePoint, direction, stripThickness, markerLength, noteColor);
+            float markerWidth = Mathf.Max(7f, laneThickness * 0.72f);
+
+            if (note.type == ChartNoteType.Catch)
+            {
+                markerWidth *= 0.7f;
+            }
+
+            DrawLanePreviewQuad(
+                notePoint - direction * (markerLength * 0.5f),
+                notePoint + direction * (markerLength * 0.5f),
+                markerWidth,
+                noteColor);
+
+            DrawLanePreviewQuad(notePoint - direction * (markerLength * 0.5f), notePoint + direction * (markerLength * 0.5f), markerWidth, noteColor);
         }
 
-        float targetSize = Mathf.Max(18f, crossThickness * 0.48f);
-        EditorGUI.DrawRect(new Rect(center.x - targetSize * 0.5f, center.y - targetSize * 0.5f, targetSize, targetSize), new Color(1f, 0.34f, 0.35f, 1f));
-        EditorGUI.DrawRect(new Rect(center.x - 4f, center.y - 4f, 8f, 8f), new Color(0.12f, 0.13f, 0.16f, 1f));
-        GUI.Label(new Rect(previewRect.x + 10f, previewRect.yMax - 19f, previewRect.width - 20f, 14f), "L1 kiri | L2 atas | L3 kanan | L4 bawah", mutedLabel);
+        GUI.Label(
+            new Rect(previewRect.x + 10f, previewRect.yMax - 19f, previewRect.width - 20f, 14f),
+            LaneCount > 4 ? "L1 kiri | L2 atas | L3 kanan | L4 bawah | L5 kiri-atas | L6 kanan-atas | L7 kiri-bawah | L8 kanan" : "L1 kiri | L2 atas | L3 kanan | L4 bawah", mutedLabel);
     }
 
     private Vector2 GetPreviewLaneDirection(int laneIndex)
     {
-        switch (laneIndex % 4)
+        switch (laneIndex)
         {
-            case 0: return new Vector2(1f, 0f); // left to center
-            case 1: return new Vector2(0f, 1f); // top to center
-            case 2: return new Vector2(-1f, 0f); // right to center
-            default: return new Vector2(0f, -1f); // bottom to center
+            case 0: return new Vector2(0, 1f);
+            case 1: return new Vector2(-1f, 0);
+            case 2: return new Vector2(0, -1f);
+            case 3: return new Vector2(1f, 0);
+
+            case 4: return new Vector2(-1f, 1f).normalized; 
+            case 5: return new Vector2(-1f, -1f).normalized; 
+            case 6: return new Vector2(1f, -1f).normalized;  
+            case 7: return new Vector2(1f, 1f).normalized;  
+
+            default: return Vector2.down;
         }
     }
 
-    private int GetPreviewLaneCountForArm(int armIndex)
+    private void DrawLanePreviewQuad(Vector2 a, Vector2 b, float thickness, Color color)
     {
-        int count = 0;
-        for (int laneIndex = armIndex; laneIndex < LaneCount; laneIndex += 4)
+        Vector2 dir = b - a;
+        if (dir.sqrMagnitude < 0.0001f)
+            return;
+
+        dir.Normalize();
+
+        Vector2 half = new Vector2(-dir.y, dir.x) * (thickness * 0.5f);
+
+        Vector3[] pts =
         {
-            count++;
-        }
-        return Mathf.Max(1, count);
-    }
+        a + half,
+        b + half,
+        b - half,
+        a - half
+    };
 
-    private Rect GetLaneStripRect(Vector2 outerPoint, Vector2 centerPoint, Vector2 direction, float thickness)
-    {
-        if (Mathf.Abs(direction.x) > 0.5f)
-        {
-            return new Rect(Mathf.Min(outerPoint.x, centerPoint.x), centerPoint.y - thickness * 0.5f,
-                Mathf.Abs(centerPoint.x - outerPoint.x), thickness);
-        }
+        Handles.BeginGUI();
 
-        return new Rect(centerPoint.x - thickness * 0.5f, Mathf.Min(outerPoint.y, centerPoint.y),
-            thickness, Mathf.Abs(centerPoint.y - outerPoint.y));
-    }
+        Color prev = Handles.color;
 
-    private void DrawLanePreviewMarker(Vector2 point, Vector2 direction, float laneThickness, float markerLength, Color color)
-    {
-        float markerWidth = Mathf.Max(7f, laneThickness * 0.72f);
-        Rect marker = Mathf.Abs(direction.x) > 0.5f
-            ? new Rect(point.x - markerLength * 0.5f, point.y - markerWidth * 0.5f, markerLength, markerWidth)
-            : new Rect(point.x - markerWidth * 0.5f, point.y - markerLength * 0.5f, markerWidth, markerLength);
-        EditorGUI.DrawRect(marker, color);
-    }
+        // Use the passed-in color parameter instead of hardcoded gray
+        Handles.color = color;
 
-    private void DrawLanePreviewHold(Vector2 start, Vector2 end, Vector2 direction, float laneThickness, Color color)
-    {
-        float bodyThickness = Mathf.Max(3f, laneThickness * 0.38f);
-        Rect body = Mathf.Abs(direction.x) > 0.5f
-            ? new Rect(Mathf.Min(start.x, end.x), start.y - bodyThickness * 0.5f, Mathf.Abs(end.x - start.x), bodyThickness)
-            : new Rect(start.x - bodyThickness * 0.5f, Mathf.Min(start.y, end.y), bodyThickness, Mathf.Abs(end.y - start.y));
-        if (body.width > 0f && body.height > 0f) 
-        {
-            EditorGUI.DrawRect(body, color);
-        }
+        Handles.DrawAAConvexPolygon(pts);
+
+        Handles.color = prev;
+
+        Handles.EndGUI();
     }
 
     private void BeginPlaceNote(Vector2 mousePosition)
